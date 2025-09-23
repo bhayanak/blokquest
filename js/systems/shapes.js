@@ -297,7 +297,9 @@ export class ShapeGenerator {
             this.shapeHistory.length < patterns.length
         );
 
-        const pattern = patterns[patternIndex];
+        // Create a deep copy of the pattern to avoid reference sharing issues
+        const originalPattern = patterns[patternIndex];
+        const pattern = originalPattern.map(row => [...row]);
         const color = colorIndex !== null ? colorIndex : Math.floor(this.random() * 8) + 1;
         
         // Update history
@@ -348,7 +350,9 @@ export class ShapeGenerator {
             
             const availablePatterns = useEasy ? easyPatterns : patterns;
             const patternIndex = Math.floor(this.random() * availablePatterns.length);
-            const pattern = availablePatterns[patternIndex];
+            // Create a deep copy of the pattern to avoid reference sharing issues
+            const originalPattern = availablePatterns[patternIndex];
+            const pattern = originalPattern.map(row => [...row]);
             const color = Math.floor(this.random() * 8) + 1;
             
             shapes.push(new Shape(pattern, color));
@@ -363,7 +367,9 @@ export class ShapeGenerator {
     generateSpecificShape(patternIndex, colorIndex = null) {
         const patterns = this.getAvailablePatterns();
         if (patternIndex >= 0 && patternIndex < patterns.length) {
-            const pattern = patterns[patternIndex];
+            // Create a deep copy of the pattern to avoid reference sharing issues
+            const originalPattern = patterns[patternIndex];
+            const pattern = originalPattern.map(row => [...row]);
             const color = colorIndex !== null ? colorIndex : Math.floor(this.random() * 8) + 1;
             return new Shape(pattern, color);
         }

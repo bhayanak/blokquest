@@ -255,10 +255,83 @@ class StorageManager {
     }
 
     /**
+     * Update mode-specific statistics
+     */
+    updateModeStats(mode, stats) {
+        if (!this.gameState.statistics.modeStats) {
+            this.gameState.statistics.modeStats = {};
+        }
+        
+        if (!this.gameState.statistics.modeStats[mode]) {
+            this.gameState.statistics.modeStats[mode] = {
+                gamesPlayed: 0,
+                averageScore: 0,
+                bestScore: 0,
+                totalScore: 0,
+                totalTime: 0,
+                highestCombo: 0,
+                linesCleared: 0,
+                shapesUsed: 0,
+                perfectClears: 0
+            };
+        }
+
+        const modeData = this.gameState.statistics.modeStats[mode];
+        
+        // Update basic stats
+        modeData.gamesPlayed += 1;
+        modeData.totalScore += stats.score || 0;
+        modeData.totalTime += stats.playTime || 0;
+        modeData.linesCleared += stats.linesCleared || 0;
+        modeData.shapesUsed += stats.shapesUsed || 0;
+        
+        // Update best records
+        if (stats.score > modeData.bestScore) {
+            modeData.bestScore = stats.score;
+        }
+        
+        if (stats.maxCombo > modeData.highestCombo) {
+            modeData.highestCombo = stats.maxCombo;
+        }
+        
+        if (stats.perfectClear) {
+            modeData.perfectClears += 1;
+        }
+        
+        // Calculate new average score
+        modeData.averageScore = Math.round(modeData.totalScore / modeData.gamesPlayed);
+        
+        // Mode-specific stats
+        if (mode === 'endless') {
+            modeData.highestLevel = Math.max(modeData.highestLevel || 0, stats.level || 0);
+            modeData.longestSurvival = Math.max(modeData.longestSurvival || 0, stats.playTime || 0);
+        }
+        
+        if (mode === 'daily') {
+            if (stats.completed) {
+                modeData.streakDays = (modeData.streakDays || 0) + 1;
+                modeData.completionRate = ((modeData.completedDays || 0) + 1) / modeData.gamesPlayed;
+            } else {
+                modeData.streakDays = 0;
+            }
+        }
+
+        this.gameState.statistics.lastPlayed = Date.now();
+        this.saveGameState();
+    }
+
+    /**
      * Get statistics
      */
     getStatistics() {
         return this.gameState.statistics;
+    }
+
+    /**
+     * Get mode-specific statistics
+     */
+    getModeStats(mode) {
+        return this.gameState.statistics.modeStats?.[mode] || {};
     }
 
     /**

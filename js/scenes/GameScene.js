@@ -735,6 +735,10 @@ export class GameScene extends Phaser.Scene {
         // Save high score
         const isNewHigh = this.scoringManager.saveHighScore();
 
+        // Update mode-specific statistics
+        const gameStats = this.getGameStatistics();
+        storage.updateModeStats(this.gameMode, gameStats);
+
         // Show game over screen
         this.showGameOverScreen(isNewHigh);
 
@@ -1193,6 +1197,10 @@ export class GameScene extends Phaser.Scene {
         if (this.gameMode === GAME_MODES.DAILY && this.dailyChallenge) {
             this.dailyChallenge.completeChallenge(score, stats);
             const rewards = this.dailyChallenge.getRewards();
+            
+            // Track mode-specific stats for daily challenge completion
+            const gameStats = this.getGameStatistics();
+            storage.updateModeStats(this.gameMode, gameStats);
 
             if (rewards) {
                 dailyChallengeOffset = 60;
