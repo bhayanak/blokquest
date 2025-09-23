@@ -136,11 +136,12 @@ export const SHAPE_PATTERNS_DIFFICULT = [
  */
 export class Shape {
     constructor(pattern, color = 1, id = null) {
-        this.pattern = pattern;
+        // Deep copy the pattern to prevent reference sharing between shapes
+        this.pattern = JSON.parse(JSON.stringify(pattern));
         this.color = color;
         this.id = id || this.generateId();
-        this.width = pattern[0].length;
-        this.height = pattern.length;
+        this.width = this.pattern[0].length;
+        this.height = this.pattern.length;
         this.isDragging = false;
         this.originalX = 0;
         this.originalY = 0;
@@ -297,9 +298,7 @@ export class ShapeGenerator {
             this.shapeHistory.length < patterns.length
         );
 
-        // Create a deep copy of the pattern to avoid reference sharing issues
-        const originalPattern = patterns[patternIndex];
-        const pattern = originalPattern.map(row => [...row]);
+        const pattern = patterns[patternIndex];
         const color = colorIndex !== null ? colorIndex : Math.floor(this.random() * 8) + 1;
         
         // Update history
@@ -350,9 +349,7 @@ export class ShapeGenerator {
             
             const availablePatterns = useEasy ? easyPatterns : patterns;
             const patternIndex = Math.floor(this.random() * availablePatterns.length);
-            // Create a deep copy of the pattern to avoid reference sharing issues
-            const originalPattern = availablePatterns[patternIndex];
-            const pattern = originalPattern.map(row => [...row]);
+            const pattern = availablePatterns[patternIndex];
             const color = Math.floor(this.random() * 8) + 1;
             
             shapes.push(new Shape(pattern, color));
@@ -367,9 +364,7 @@ export class ShapeGenerator {
     generateSpecificShape(patternIndex, colorIndex = null) {
         const patterns = this.getAvailablePatterns();
         if (patternIndex >= 0 && patternIndex < patterns.length) {
-            // Create a deep copy of the pattern to avoid reference sharing issues
-            const originalPattern = patterns[patternIndex];
-            const pattern = originalPattern.map(row => [...row]);
+            const pattern = patterns[patternIndex];
             const color = colorIndex !== null ? colorIndex : Math.floor(this.random() * 8) + 1;
             return new Shape(pattern, color);
         }
