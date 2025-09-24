@@ -759,16 +759,22 @@ export class GameScene extends Phaser.Scene {
     }
 
     /**
-     * Set up drag and drop for shapes
+     * Set up drag and drop for shapes - Mobile optimized
      */
     setupShapeDragAndDrop(shapeGraphic) {
-        shapeGraphic.on('pointerdown', (pointer, localX, localY, event) => {
-            if (this.gameState !== 'playing') return;
+        let isDragging = false;
+        let dragPointerId = null;
 
+        shapeGraphic.on('pointerdown', (pointer, localX, localY, event) => {
+            if (this.gameState !== 'playing' || this.draggedShape) return;
+
+            // Prevent multiple drags and store pointer ID for mobile
+            isDragging = true;
+            dragPointerId = pointer.id;
             this.draggedShape = shapeGraphic;
             shapeGraphic.setDepth(100);
 
-            // Store touch offset for better mobile experience (so finger doesn't obscure the shape)
+            // Store touch offset for better mobile experience
             this.dragOffset = {
                 x: localX,
                 y: localY
@@ -776,22 +782,39 @@ export class GameScene extends Phaser.Scene {
 
             // Create drag preview with mobile optimization
             this.startDragPreview(shapeGraphic, pointer);
+            
+            // Stop event propagation to prevent conflicts
+            event.stopPropagation();
         });
 
+        // Use specific pointer move/up handlers for better mobile support
         this.input.on('pointermove', (pointer) => {
-            if (this.draggedShape === shapeGraphic && this.gameState === 'playing') {
+            if (isDragging && pointer.id === dragPointerId && this.draggedShape === shapeGraphic && this.gameState === 'playing') {
                 this.updateDragPreview(pointer);
                 
                 // Haptic feedback for mobile devices
                 if ('vibrate' in navigator && pointer.isDown) {
-                    navigator.vibrate(5); // Subtle vibration for drag feedback
+                    navigator.vibrate(5);
                 }
             }
         });
 
         this.input.on('pointerup', (pointer) => {
-            if (this.draggedShape === shapeGraphic && this.gameState === 'playing') {
+            if (isDragging && pointer.id === dragPointerId && this.draggedShape === shapeGraphic) {
                 this.endDragPreview(pointer);
+                
+                // Clean up drag state
+                isDragging = false;
+                dragPointerId = null;
+            }
+        });
+
+        // Additional cleanup for mobile - handle pointer cancel events
+        this.input.on('pointercancel', (pointer) => {
+            if (isDragging && pointer.id === dragPointerId && this.draggedShape === shapeGraphic) {
+                this.cancelDrag();
+                isDragging = false;
+                dragPointerId = null;
             }
         });
     }
@@ -898,6 +921,7 @@ export class GameScene extends Phaser.Scene {
             this.createShapePlaceEffect(shape, gridPos.col, gridPos.row);
 
             // Remove from tray
+            console.log('📦 Removing shape from tray slot:', shapeIndex);
             this.trayShapes[shapeIndex] = null;
             this.draggedShape.destroy();
             
@@ -921,11 +945,13 @@ export class GameScene extends Phaser.Scene {
                 this.handleChallengeShapePlacement(shape);
             }
 
-            // Only refill tray after all shapes are placed (for adventure mode)
-            if (
-                (this.gameMode === GAME_MODES.ADVENTURE && this.trayShapes.every(s => s === null)) ||
-                (this.gameMode !== GAME_MODES.ADVENTURE && this.trayShapes.every(s => s === null))
-            ) {
+            // Refill tray when empty - improved mobile logic
+            const emptySlots = this.trayShapes.filter(s => s === null).length;
+            const totalSlots = this.trayShapes.length;
+            
+            if (emptySlots === totalSlots) {
+                // All shapes used - generate new set
+                console.log('🔄 All shapes used, generating new tray shapes');
                 this.generateTrayShapes();
             }
 
@@ -961,12 +987,49 @@ export class GameScene extends Phaser.Scene {
             }
         }
 
+        // Clean up drag state completely
         this.gameGrid.hidePlacementPreview();
         if (this.draggedShape) {
             this.draggedShape.setDepth(1);
         }
         this.draggedShape = null;
-        this.dragOffset = null; // Clean up touch offset
+        this.dragOffset = null;
+        this.lastDragPosition = null;
+    }
+
+    /**
+     * Cancel drag operation - for mobile cleanup
+     */
+    cancelDrag() {
+        if (!this.draggedShape) return;
+
+        // Scale shape back to preview size
+        const colors = themeManager.getPhaserColors();
+        const blockColor = colors.blockColors[(this.draggedShape.shape.color - 1) % colors.blockColors.length];
+        
+        this.draggedShape.clear();
+        this.draggedShape.fillStyle(blockColor);
+        this.draggedShape.lineStyle(2, blockColor, 0.8);
+
+        const previewSize = GRID.CELL_SIZE * 0.7;
+        const previewSpacing = previewSize + 1;
+
+        for (let y = 0; y < this.draggedShape.shape.height; y++) {
+            for (let x = 0; x < this.draggedShape.shape.width; x++) {
+                if (this.draggedShape.shape.pattern[y][x] === 1) {
+                    const blockX = x * previewSpacing;
+                    const blockY = y * previewSpacing;
+                    this.draw3DBlock(this.draggedShape, blockX, blockY, previewSize, blockColor);
+                }
+            }
+        }
+
+        // Clean up all drag state
+        this.gameGrid.hidePlacementPreview();
+        this.draggedShape.setDepth(1);
+        this.draggedShape = null;
+        this.dragOffset = null;
+        this.lastDragPosition = null;
     }
 
     /**

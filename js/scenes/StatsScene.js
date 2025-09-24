@@ -208,16 +208,18 @@ export default class StatsScene extends Phaser.Scene {
             backButton.setScale(1.0);
         });
 
-        // Scroll indicators with theme
-        this.scrollUpIndicator = this.add.text(this.cameras.main.width - 30, 200, '▲', {
-            fontSize: '20px',
-            color: theme.textSecondary
-        }).setOrigin(0.5).setAlpha(0);
+        // Scroll indicators with theme - better positioning and visibility
+        this.scrollUpIndicator = this.add.text(this.cameras.main.width - 30, 220, '▲', {
+            fontSize: '24px',
+            color: theme.text,
+            fontStyle: 'bold'
+        }).setOrigin(0.5).setAlpha(0).setDepth(1000);
 
-        this.scrollDownIndicator = this.add.text(this.cameras.main.width - 30, this.cameras.main.height - 120, '▼', {
-            fontSize: '20px',
-            color: theme.textSecondary
-        }).setOrigin(0.5).setAlpha(0);
+        this.scrollDownIndicator = this.add.text(this.cameras.main.width - 30, this.cameras.main.height - 140, '▼', {
+            fontSize: '24px',
+            color: theme.text,
+            fontStyle: 'bold'
+        }).setOrigin(0.5).setAlpha(0).setDepth(1000);
     }
 
     showContent() {
@@ -240,6 +242,15 @@ export default class StatsScene extends Phaser.Scene {
 
     showAchievements() {
         const achievements = achievementSystem.getAchievementDisplayData();
+        
+        // Check if player has any progress on achievements
+        const hasProgress = achievements.some(achievement => achievement.progress > 0);
+        if (!hasProgress) {
+            console.log('🏆 Achievement Info: Start playing BlockQuest to unlock achievements and earn rewards!');
+        } else {
+            console.log('🏆 Achievements loaded with progress');
+        }
+        
         const startY = 260; // Much more space to prevent clipping of first card
         const achievementHeight = 110; // Taller cards for better text layout
         
@@ -248,7 +259,10 @@ export default class StatsScene extends Phaser.Scene {
             this.createAchievementCard(achievement, y);
         });
         
-        this.maxScroll = Math.max(0, (achievements.length * achievementHeight) - (this.cameras.main.height - 200));
+        // Calculate maxScroll properly - content height minus visible area
+        const totalContentHeight = startY + (achievements.length * achievementHeight) + 100; // Extra padding at bottom
+        const visibleAreaHeight = this.cameras.main.height - 180; // Account for header and footer
+        this.maxScroll = Math.max(0, totalContentHeight - visibleAreaHeight);
     }
 
     createAchievementCard(achievement, y) {
@@ -372,9 +386,11 @@ export default class StatsScene extends Phaser.Scene {
     }
 
     showRecords() {
-        // Check if we have game data
+        // Check if we have game data and provide helpful info
         if (achievementSystem.records.overall.totalGamesPlayed === 0) {
-            console.warn('⚠️ No game data found. Play some games to see statistics.');
+            console.log('📊 Stats Info: No games played yet. Play some BlockQuest games to see your statistics and achievements!');
+        } else {
+            console.log('📊 Stats loaded:', achievementSystem.records.overall.totalGamesPlayed, 'games played');
         }
         
         const records = achievementSystem.getRecordsDisplayData();
@@ -387,7 +403,10 @@ export default class StatsScene extends Phaser.Scene {
             currentY += 40; // More space between categories to prevent overlapping
         });
         
-        this.maxScroll = Math.max(0, currentY - startY - (this.cameras.main.height - 200));
+        // Calculate maxScroll properly for records - ensure we can scroll to see all content
+        const totalContentHeight = currentY + 100; // Add padding at bottom
+        const visibleAreaHeight = this.cameras.main.height - 180; // Account for header and footer
+        this.maxScroll = Math.max(0, totalContentHeight - visibleAreaHeight);
     }
 
     createRecordsCategory(categoryName, categoryData, startY) {
@@ -454,27 +473,13 @@ export default class StatsScene extends Phaser.Scene {
         return currentY + (recordsPerColumn * 30) + 25; // More space after each category
     }
 
-    // Test method to add dummy data for debugging
-    addTestData() {
-        console.log('Adding test data...');
-        achievementSystem.updateRecords('normal', {
-            score: 1500,
-            linesCleared: 10,
-            maxCombo: 3,
-            shapesPlaced: 25,
-            playTime: 120000,
-            coinsEarned: 50
-        });
-        console.log('Test data added');
-    }
-
     setupScrolling() {
-        // Mouse wheel scrolling - reduced speed for better control
+        // Mouse wheel scrolling - balanced speed for smooth control
         this.input.on('wheel', (pointer, gameObjects, deltaX, deltaY) => {
-            this.scroll(deltaY > 0 ? 25 : -25); // Reduced from 50 to 25
+            this.scroll(deltaY > 0 ? 20 : -20); // Reduced for smoother scrolling
         });
         
-        // Touch scrolling (basic implementation) - reduced speed
+        // Touch scrolling - balanced sensitivity 
         let startY = 0;
         let isDragging = false;
         
@@ -488,13 +493,22 @@ export default class StatsScene extends Phaser.Scene {
         this.input.on('pointermove', (pointer) => {
             if (isDragging) {
                 const deltaY = startY - pointer.y;
-                this.scroll(deltaY * 1); // Reduced from 2 to 1
+                this.scroll(deltaY * 0.8); // Reduced sensitivity for smoother touch scrolling
                 startY = pointer.y;
             }
         });
         
         this.input.on('pointerup', () => {
             isDragging = false;
+        });
+        
+        // Keyboard scrolling for better accessibility
+        this.input.keyboard.on('keydown-UP', () => {
+            this.scroll(-25);
+        });
+        
+        this.input.keyboard.on('keydown-DOWN', () => {
+            this.scroll(25);
         });
     }
 
@@ -505,8 +519,32 @@ export default class StatsScene extends Phaser.Scene {
     }
 
     updateScrollIndicators() {
-        // Show/hide scroll indicators
-        this.scrollUpIndicator.setAlpha(this.scrollOffset > 0 ? 1 : 0);
-        this.scrollDownIndicator.setAlpha(this.scrollOffset < this.maxScroll ? 1 : 0);
+        // Show/hide scroll indicators with better visibility
+        const canScrollUp = this.scrollOffset > 5; // Small buffer to avoid flickering
+        const canScrollDown = this.scrollOffset < (this.maxScroll - 5);
+        
+        this.scrollUpIndicator.setAlpha(canScrollUp ? 0.8 : 0.3);
+        this.scrollDownIndicator.setAlpha(canScrollDown ? 0.8 : 0.3);
+        
+        // Add pulsing effect to active indicators
+        if (canScrollUp) {
+            this.tweens.add({
+                targets: this.scrollUpIndicator,
+                alpha: 1,
+                duration: 500,
+                yoyo: true,
+                repeat: -1
+            });
+        }
+        
+        if (canScrollDown) {
+            this.tweens.add({
+                targets: this.scrollDownIndicator,
+                alpha: 1,
+                duration: 500,
+                yoyo: true,
+                repeat: -1
+            });
+        }
     }
 }
