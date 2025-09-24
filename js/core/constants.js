@@ -5,8 +5,8 @@ export const GAME_CONFIG = {
     backgroundColor: '#1a1a2e', // Deep purple instead of black
     parent: 'game-container',
     scale: {
-        mode: Phaser.Scale.FIT,
-        autoCenter: Phaser.Scale.CENTER_BOTH,
+        mode: 1, // Phaser.Scale.FIT
+        autoCenter: 4, // Phaser.Scale.CENTER_BOTH  
         min: {
             width: 320,
             height: 480

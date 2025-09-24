@@ -2,7 +2,7 @@
 export const THEMES = {
     vibrant: {
         name: 'Vibrant',
-        background: '#FF6B6B', // Bright coral background
+        background: '#2b928bff', // (darker shade)
         primary: '#4ECDC4', // Turquoise primary
         secondary: '#45B7D1', // Sky blue secondary  
         accent: '#FFA07A', // Light salmon accent

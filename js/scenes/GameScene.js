@@ -9,6 +9,7 @@ import { ShapeGenerator } from '../systems/shapes.js';
 import { ScoringManager } from '../systems/scoring.js';
 import { PowerUpManager } from '../systems/powerups.js';
 import { DailyChallenge, markDailyCompleted, isDailyCompleted } from '../systems/DailyChallenge.js';
+import { achievementSystem } from '../systems/AchievementSystem.js';
 import { hasValidMoves, getTodaysSeed, pixelToGrid } from '../core/utils.js';
 
 export class GameScene extends Phaser.Scene {
@@ -39,6 +40,10 @@ export class GameScene extends Phaser.Scene {
         this.nextShapes = null;
         this.smartHints = [];
         this.previousCoins = 0;
+        
+        // Endless mode variables
+        this.endlessPressureLevel = 1;
+        this.shapeGenerationDelay = 1000;
     }
 
     init(data) {
@@ -86,14 +91,62 @@ export class GameScene extends Phaser.Scene {
     }
 
     /**
+     * Update game state every frame
+     */
+    update() {
+        // Update daily challenges
+        if (this.gameMode === GAME_MODES.DAILY && this.dailyChallenge) {
+            this.updateDailyChallenge();
+        }
+    }
+
+    /**
+     * Update daily challenge progress
+     */
+    updateDailyChallenge() {
+        const challengeType = this.dailyChallenge.challengeType;
+        
+        // Update Time Attack timer
+        if (challengeType === 'timeAttack') {
+            this.dailyChallenge.updateTimeAttack();
+            
+            // Check if time is up
+            if (this.dailyChallenge.timeRemaining <= 0) {
+                this.gameOver();
+                return;
+            }
+        }
+        
+        // Update challenge UI
+        this.updateChallengeUI();
+        
+        // Handle mystery grid reveals for Wednesday challenges
+        if (challengeType === 'mysteryGrid' && this.lastLinesCleared > 0) {
+            this.handleMysteryGridReveal(this.lastLinesCleared);
+            this.lastLinesCleared = 0; // Reset to prevent repeated calls
+        }
+    }
+
+    /**
      * Initialize game systems
      */
     initializeSystems() {
         // Initialize daily challenge if needed
         if (this.gameMode === GAME_MODES.DAILY) {
             this.dailyChallenge = new DailyChallenge();
-            const seed = getTodaysSeed();
-            this.shapeGenerator = new ShapeGenerator(this.difficulty, true, seed);
+            const challengeConfig = this.dailyChallenge.startChallenge();
+            
+            // Configure shape generator based on challenge type
+            if (challengeConfig.type === 'shapeMaster') {
+                this.shapeGenerator = new ShapeGenerator(this.difficulty, true, challengeConfig.seed, {
+                    allowedTypes: challengeConfig.challengeState.allowedShapeTypes
+                });
+            } else {
+                this.shapeGenerator = new ShapeGenerator(this.difficulty, true, challengeConfig.seed);
+            }
+            
+            // Initialize challenge-specific UI elements
+            this.initializeChallengeUI(challengeConfig);
         } else {
             this.shapeGenerator = new ShapeGenerator(this.difficulty, false);
         }
@@ -306,6 +359,328 @@ export class GameScene extends Phaser.Scene {
             this.powerUpTooltip.destroy();
             this.powerUpTooltip = null;
         }
+    }
+
+    /**
+     * Initialize challenge-specific UI elements
+     */
+    initializeChallengeUI(challengeConfig) {
+        const centerX = this.cameras.main.centerX;
+        const theme = themeManager.getCurrentTheme();
+        
+        // Challenge header with type and description
+        this.ui.challengeHeader = this.add.text(centerX, 5, 
+            `${challengeConfig.config.icon} ${challengeConfig.config.name}`, {
+            fontSize: '16px', 
+            fontFamily: 'Arial Bold', 
+            color: challengeConfig.config.color,
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5).setDepth(100);
+        
+        // Challenge-specific UI elements
+        switch (challengeConfig.type) {
+            case 'timeAttack':
+                this.initializeTimeAttackUI();
+                break;
+            case 'shapeMaster':
+                this.initializeShapeMasterUI(challengeConfig.challengeState.allowedShapeTypes);
+                break;
+            case 'mysteryGrid':
+                this.initializeMysteryGridUI(challengeConfig.challengeState.mysteryImage);
+                // Initialize milestone tracking
+                this.mysteryMilestone25 = false;
+                this.mysteryMilestone50 = false;
+                this.mysteryMilestone75 = false;
+                this.mysteryFullyRevealed = false;
+                this.mysteryGuessShown = false;
+                this.revealedPixelGraphics = [];
+                break;
+            case 'cascade':
+                this.initializeCascadeUI();
+                break;
+            case 'speedRun':
+                this.initializeSpeedRunUI();
+                break;
+            case 'zenMode':
+                this.initializeZenModeUI();
+                break;
+            case 'bossBattle':
+                this.initializeBossBattleUI(challengeConfig.challengeState.bossHealth, challengeConfig.challengeState.bossWeakness);
+                break;
+        }
+    }
+
+    /**
+     * Initialize Time Attack UI (timer)
+     */
+    initializeTimeAttackUI() {
+        const centerX = this.cameras.main.centerX;
+        this.ui.timerText = this.add.text(centerX + 100, 25, '3:00', {
+            fontSize: '18px',
+            fontFamily: 'Arial Bold',
+            color: '#FF4444',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5).setDepth(100);
+    }
+
+    /**
+     * Initialize Shape Master UI (allowed shapes display)
+     */
+    initializeShapeMasterUI(allowedTypes) {
+        const centerX = this.cameras.main.centerX;
+        this.ui.allowedShapesText = this.add.text(centerX, 380, 
+            `Allowed: ${allowedTypes.join(', ')}`, {
+            fontSize: '12px',
+            fontFamily: 'Arial',
+            color: '#4444FF',
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            padding: { x: 8, y: 4 }
+        }).setOrigin(0.5).setDepth(100);
+    }
+
+    /**
+     * Initialize Mystery Grid UI (face reveal area)
+     */
+    initializeMysteryGridUI(mysteryImage) {
+        // Mystery images database with detailed pixel art patterns
+        this.mysteryImages = {
+            'crown': {
+                name: 'Crown',
+                pattern: [
+                    '    ████    ',
+                    '   █    █   ',
+                    '  █  ██  █  ',
+                    ' █   ██   █ ',
+                    '█    ██    █',
+                    '█████████████',
+                    '█████████████'
+                ],
+                hints: ['👑 Worn by royalty', '✨ Symbol of power and authority', '🏰 Found in castles and palaces'],
+                answers: ['crown', 'king crown', 'royal crown', 'golden crown', 'tiara']
+            },
+            'heart': {
+                name: 'Heart',
+                pattern: [
+                    '  ██  ██  ',
+                    ' ████████ ',
+                    '███████████',
+                    '███████████',
+                    ' █████████ ',
+                    '  ███████  ',
+                    '   █████   ',
+                    '    ███    ',
+                    '     █     '
+                ],
+                hints: ['❤️ Symbol of love and affection', '💝 Common on Valentine\'s Day', '🫀 Organ that pumps blood'],
+                answers: ['heart', 'love heart', 'valentine heart', 'love']
+            },
+            'star': {
+                name: 'Star',
+                pattern: [
+                    '     █     ',
+                    '    ███    ',
+                    '   █████   ',
+                    '  ███████  ',
+                    '█████████████',
+                    ' ███████████ ',
+                    '  █████████  ',
+                    '   ███ ███   ',
+                    '  ███   ███  ',
+                    ' ███     ███ ',
+                    '███       ███'
+                ],
+                hints: ['⭐ Shines brightly in the night sky', '🌟 Five-pointed celestial object', '✨ "Twinkle twinkle little..."'],
+                answers: ['star', 'five pointed star', 'night star', 'shooting star']
+            },
+            'house': {
+                name: 'House',
+                pattern: [
+                    '     ∆     ',
+                    '    ███    ',
+                    '   █████   ',
+                    '  ███████  ',
+                    ' █████████ ',
+                    '███████████',
+                    '█  █████  █',
+                    '█  █████  █',
+                    '█  █████  █',
+                    '█  █████  █',
+                    '█  █████  █',
+                    '███████████'
+                ],
+                hints: ['🏠 Where families live together', '🚪 Has rooms, doors and windows', '🏡 "Home sweet..."'],
+                answers: ['house', 'home', 'building', 'cottage']
+            },
+            'butterfly': {
+                name: 'Butterfly',
+                pattern: [
+                    '█  █    █  █',
+                    '████    ████',
+                    '██████████████',
+                    '███████████████',
+                    '██████████████',
+                    '████    ████',
+                    '█  █ ██ █  █',
+                    '   █████   ',
+                    '   █████   ',
+                    '   █████   '
+                ],
+                hints: ['🦋 Beautiful flying insect', '🌸 Loves flowers and nectar', '🐛 Was once a caterpillar'],
+                answers: ['butterfly', 'moth', 'flying insect']
+            }
+        };
+        
+        // Select random mystery image
+        const imageKeys = Object.keys(this.mysteryImages);
+        this.currentMysteryKey = imageKeys[Math.floor(Math.random() * imageKeys.length)];
+        this.currentMystery = this.mysteryImages[this.currentMysteryKey];
+        
+        const centerX = this.cameras.main.centerX;
+        
+        // Create mystery reveal area (positioned over the main grid with transparency)
+        const revealAreaX = centerX;
+        const revealAreaY = GRID.START_Y + (GRID.ROWS * GRID.CELL_SIZE) / 2;
+        
+        this.ui.mysteryRevealArea = this.add.rectangle(
+            revealAreaX, revealAreaY,
+            160, 140,
+            0x000066, 0.15  // Very transparent so game grid shows through
+        ).setDepth(5);
+        
+        this.ui.mysteryRevealArea.setStrokeStyle(2, 0xFFD700, 0.8);
+        
+        // Mystery title (positioned at top right)
+        this.ui.mysteryTitle = this.add.text(this.cameras.main.width - 120, 50, 
+            '🔍 MYSTERY IMAGE', {
+            fontSize: '13px',
+            fontFamily: 'Arial',
+            color: '#FFD700',
+            backgroundColor: 'rgba(0,0,50,0.8)',
+            padding: { x: 8, y: 4 },
+            fontStyle: 'bold'
+        }).setOrigin(0.5).setDepth(100);
+        
+        // Initialize tracking variables
+        this.mysteryLinesCleared = 0;
+        this.mysteryPixelsRevealed = 0;
+        this.mysteryRevealed = false;
+        this.mysteryGuessed = false;
+        this.currentHintIndex = 0;
+        this.revealedPixels = [];
+        this.mysteryPixelGroup = this.add.group();
+        
+        // Calculate total pixels in pattern
+        this.mysteryTotalPixels = this.currentMystery.pattern
+            .join('')
+            .replace(/ /g, '')
+            .length;
+        
+        // Progress text (positioned at top right, away from grid)
+        this.ui.mysteryProgress = this.add.text(this.cameras.main.width - 120, 100, 
+            `Lines Cleared: 0/15\nReveal Progress: 0%`, {
+            fontSize: '11px',
+            fontFamily: 'Arial',
+            color: '#FFD700',
+            backgroundColor: 'rgba(0,0,50,0.8)',
+            padding: { x: 8, y: 4 },
+            align: 'center'
+        }).setOrigin(0.5).setDepth(100);
+        
+        // Initial challenge hint
+        this.ui.mysteryHint = this.add.text(centerX, 400, 
+            '🎯 Clear 15 lines to reveal the mystery image!\n💡 Then guess what it is for bonus rewards!', {
+            fontSize: '12px',
+            fontFamily: 'Arial',
+            color: '#FFD700',
+            backgroundColor: 'rgba(0,0,50,0.9)',
+            padding: { x: 12, y: 6 },
+            align: 'center'
+        }).setOrigin(0.5).setDepth(100);
+        
+        // Store reveal area coordinates for pixel placement
+        this.mysteryRevealAreaX = revealAreaX - 80;
+        this.mysteryRevealAreaY = revealAreaY - 70;
+        
+        // Schedule hint disappearance
+        this.time.delayedCall(4000, () => {
+            if (this.ui.mysteryHint) {
+                this.ui.mysteryHint.destroy();
+                this.ui.mysteryHint = null;
+            }
+        });
+    }
+
+    /**
+     * Initialize Cascade UI (multiplier display)
+     */
+    initializeCascadeUI() {
+        const centerX = this.cameras.main.centerX;
+        this.ui.cascadeMultiplier = this.add.text(centerX, 380, 'Cascade: x1.0', {
+            fontSize: '16px',
+            fontFamily: 'Arial Bold',
+            color: '#FFFF44',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5).setDepth(100);
+    }
+
+    /**
+     * Initialize Speed Run UI (speed level display)
+     */
+    initializeSpeedRunUI() {
+        const centerX = this.cameras.main.centerX;
+        this.ui.speedLevel = this.add.text(centerX, 380, 'Speed: Level 1', {
+            fontSize: '14px',
+            fontFamily: 'Arial Bold',
+            color: '#44FFFF',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5).setDepth(100);
+    }
+
+    /**
+     * Initialize Zen Mode UI (pattern score display)
+     */
+    initializeZenModeUI() {
+        const centerX = this.cameras.main.centerX;
+        this.ui.patternScore = this.add.text(centerX, 380, 'Harmony: 0', {
+            fontSize: '14px',
+            fontFamily: 'Arial Bold',
+            color: '#44FF44',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5).setDepth(100);
+    }
+
+    /**
+     * Initialize Boss Battle UI (health bar and weakness display)
+     */
+    initializeBossBattleUI(bossHealth, bossWeakness) {
+        const centerX = this.cameras.main.centerX;
+        
+        // Boss health bar
+        this.ui.bossHealthBg = this.add.rectangle(centerX, 390, 200, 20, 0x440000).setDepth(100);
+        this.ui.bossHealthBar = this.add.rectangle(centerX - 100, 390, 200, 16, 0xFF0000).setOrigin(0, 0.5).setDepth(101);
+        
+        this.ui.bossHealthText = this.add.text(centerX, 390, `Boss: ${bossHealth}`, {
+            fontSize: '12px',
+            fontFamily: 'Arial Bold',
+            color: '#FFFFFF',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5).setDepth(102);
+        
+        // Boss weakness display
+        this.ui.bossWeaknessText = this.add.text(centerX, 415, 
+            `Weakness: ${bossWeakness.name}`, {
+            fontSize: '10px',
+            fontFamily: 'Arial',
+            color: '#FFB000',
+            backgroundColor: 'rgba(0,0,0,0.7)',
+            padding: { x: 6, y: 2 }
+        }).setOrigin(0.5).setDepth(100);
     }
 
     /**
@@ -541,6 +916,11 @@ export class GameScene extends Phaser.Scene {
             // Check for completed lines
             this.checkCompletedLines();
 
+            // Handle challenge-specific logic for shape placement
+            if (this.gameMode === GAME_MODES.DAILY && this.dailyChallenge) {
+                this.handleChallengeShapePlacement(shape);
+            }
+
             // Only refill tray after all shapes are placed (for adventure mode)
             if (
                 (this.gameMode === GAME_MODES.ADVENTURE && this.trayShapes.every(s => s === null)) ||
@@ -649,8 +1029,21 @@ export class GameScene extends Phaser.Scene {
         const { rows, cols } = this.gameGrid.findCompletedLines();
 
         if (rows.length > 0 || cols.length > 0) {
-            // Calculate score
+            // Store lines cleared for challenge logic
+            this.lastLinesCleared = rows.length + cols.length;
+            
+            // Calculate base score
             const result = this.scoringManager.processCompletedLines(rows, cols);
+            
+            // Apply challenge-specific score multipliers
+            if (this.gameMode === GAME_MODES.DAILY && this.dailyChallenge) {
+                const challengeMultiplier = this.dailyChallenge.getScoreMultiplier();
+                const bonusScore = Math.floor(result.score * (challengeMultiplier - 1));
+                if (bonusScore > 0) {
+                    this.scoringManager.addScore(bonusScore);
+                    this.showFloatingScore(bonusScore, 'CHALLENGE BONUS');
+                }
+            }
 
             // Track analytics for line clears
             const totalLinesCleared = rows.length + cols.length;
@@ -694,7 +1087,26 @@ export class GameScene extends Phaser.Scene {
         const validShapes = this.trayShapes.filter(s => s !== null);
 
         if (!hasValidMoves(this.gameGrid.grid, validShapes)) {
+            // In endless mode, only auto-cleanup if grid is 80% full
+            // Otherwise, it's a legitimate game over
+            if (this.gameMode === GAME_MODES.ENDLESS) {
+                const fillPercentage = this.getGridFillPercentage();
+                if (fillPercentage >= 0.8) {
+                    this.performEndlessCleanup();
+                    return;
+                } else {
+                    // Grid isn't full enough for cleanup - legitimate game over
+                    this.gameOver();
+                    return;
+                }
+            }
+            
             this.gameOver();
+        }
+        
+        // In endless mode, also check for grid fullness (80% full triggers cleanup)
+        if (this.gameMode === GAME_MODES.ENDLESS) {
+            this.checkEndlessFullness();
         }
     }
 
@@ -739,8 +1151,13 @@ export class GameScene extends Phaser.Scene {
         const gameStats = this.getGameStatistics();
         storage.updateModeStats(this.gameMode, gameStats);
 
+        // Update achievements and check for unlocks
+        console.log('🎮 GAME OVER - Calling achievementSystem.updateRecords with:', this.gameMode, gameStats);
+        const achievementUnlocks = achievementSystem.updateRecords(this.gameMode, gameStats);
+        console.log('🏆 Achievement unlocks received:', achievementUnlocks);
+        
         // Show game over screen
-        this.showGameOverScreen(isNewHigh);
+        this.showGameOverScreen(isNewHigh, achievementUnlocks);
 
         console.log('Game Over!');
     }
@@ -948,9 +1365,913 @@ export class GameScene extends Phaser.Scene {
     }
 
     /**
+     * ENDLESS MODE: Check if grid is 80% full and trigger cleanup
+     */
+    checkEndlessFullness() {
+        const grid = this.gameGrid.grid;
+        let filledCells = 0;
+        const totalCells = GRID.ROWS * GRID.COLS;
+        
+        for (let row = 0; row < GRID.ROWS; row++) {
+            for (let col = 0; col < GRID.COLS; col++) {
+                if (grid[row][col] > 0) filledCells++;
+            }
+        }
+        
+        const fillPercentage = filledCells / totalCells;
+        
+        if (fillPercentage >= 0.8) {
+            this.performEndlessCleanup();
+            this.showMessage('Grid Overflow! Auto-cleanup activated!', 2000);
+        }
+    }
+
+    /**
+     * ENDLESS MODE: Perform smart cleanup to keep game going
+     */
+    performEndlessCleanup() {
+        if (!this.gameGrid || !this.gameGrid.grid) return;
+        
+        const grid = this.gameGrid.grid;
+        let cleared = 0;
+        
+        // Strategy 1: Clear incomplete lines first (priority cleanup)
+        cleared += this.clearIncompleteLines();
+        
+        // Strategy 2: If still too full, clear scattered blocks
+        if (this.getGridFillPercentage() > 0.6) {
+            cleared += this.clearScatteredBlocks();
+        }
+        
+        // Strategy 3: Emergency cleanup - clear random blocks if needed
+        if (this.getGridFillPercentage() > 0.7) {
+            cleared += this.emergencyCleanup();
+        }
+        
+        // Re-render grid and play effects
+        if (cleared > 0) {
+            this.gameGrid.render();
+            audioManager.playClear();
+            
+            // Add visual cleanup effect
+            this.createCleanupEffect();
+            
+            // Award points for survival
+            const bonusPoints = cleared * 5;
+            this.scoringManager.addScore(bonusPoints);
+            this.showFloatingScore(bonusPoints, 'SURVIVAL BONUS');
+            
+            // Check for pressure level increase
+            this.updateEndlessPressure();
+        }
+        
+        console.log(`Endless cleanup cleared ${cleared} blocks`);
+    }
+
+    /**
+     * ENDLESS MODE: Clear incomplete lines (lines with 7-9 blocks)
+     */
+    clearIncompleteLines() {
+        const grid = this.gameGrid.grid;
+        let cleared = 0;
+        
+        // Check rows
+        for (let row = 0; row < GRID.ROWS; row++) {
+            let count = 0;
+            for (let col = 0; col < GRID.COLS; col++) {
+                if (grid[row][col] > 0) count++;
+            }
+            
+            // Clear lines that are 70-90% full
+            if (count >= 7 && count <= 9) {
+                for (let col = 0; col < GRID.COLS; col++) {
+                    if (grid[row][col] > 0) {
+                        grid[row][col] = 0;
+                        cleared++;
+                    }
+                }
+            }
+        }
+        
+        // Check columns
+        for (let col = 0; col < GRID.COLS; col++) {
+            let count = 0;
+            for (let row = 0; row < GRID.ROWS; row++) {
+                if (grid[row][col] > 0) count++;
+            }
+            
+            // Clear columns that are 70-90% full
+            if (count >= 7 && count <= 9) {
+                for (let row = 0; row < GRID.ROWS; row++) {
+                    if (grid[row][col] > 0) {
+                        grid[row][col] = 0;
+                        cleared++;
+                    }
+                }
+            }
+        }
+        
+        return cleared;
+    }
+
+    /**
+     * ENDLESS MODE: Clear scattered blocks (isolated blocks)
+     */
+    clearScatteredBlocks() {
+        const grid = this.gameGrid.grid;
+        let cleared = 0;
+        
+        for (let row = 0; row < GRID.ROWS; row++) {
+            for (let col = 0; col < GRID.COLS; col++) {
+                if (grid[row][col] > 0 && this.isIsolatedBlock(row, col)) {
+                    grid[row][col] = 0;
+                    cleared++;
+                    
+                    // 30% chance to clear adjacent blocks too
+                    if (Math.random() < 0.3) {
+                        this.clearAdjacentBlocks(row, col);
+                        cleared += this.countAdjacentClearable(row, col);
+                    }
+                }
+            }
+        }
+        
+        return cleared;
+    }
+
+    /**
+     * ENDLESS MODE: Emergency cleanup - clear random blocks
+     */
+    emergencyCleanup() {
+        const grid = this.gameGrid.grid;
+        let cleared = 0;
+        
+        for (let row = 0; row < GRID.ROWS; row++) {
+            for (let col = 0; col < GRID.COLS; col++) {
+                if (grid[row][col] > 0 && Math.random() < 0.15) { // 15% chance
+                    grid[row][col] = 0;
+                    cleared++;
+                }
+            }
+        }
+        
+        return cleared;
+    }
+
+    /**
+     * ENDLESS MODE: Check if block is isolated (has few neighbors)
+     */
+    isIsolatedBlock(row, col) {
+        const grid = this.gameGrid.grid;
+        let neighbors = 0;
+        
+        for (let r = Math.max(0, row - 1); r <= Math.min(GRID.ROWS - 1, row + 1); r++) {
+            for (let c = Math.max(0, col - 1); c <= Math.min(GRID.COLS - 1, col + 1); c++) {
+                if (r !== row || c !== col) {
+                    if (grid[r][c] > 0) neighbors++;
+                }
+            }
+        }
+        
+        return neighbors <= 2; // Isolated if 2 or fewer neighbors
+    }
+
+    /**
+     * ENDLESS MODE: Get current grid fill percentage
+     */
+    getGridFillPercentage() {
+        const grid = this.gameGrid.grid;
+        let filled = 0;
+        const total = GRID.ROWS * GRID.COLS;
+        
+        for (let row = 0; row < GRID.ROWS; row++) {
+            for (let col = 0; col < GRID.COLS; col++) {
+                if (grid[row][col] > 0) filled++;
+            }
+        }
+        
+        return filled / total;
+    }
+
+    /**
+     * ENDLESS MODE: Update pressure level based on score
+     */
+    updateEndlessPressure() {
+        if (this.gameMode !== GAME_MODES.ENDLESS) return;
+        
+        const currentScore = this.scoringManager.currentScore;
+        const newPressureLevel = Math.floor(currentScore / 100) + 1;
+        
+        if (!this.endlessPressureLevel) {
+            this.endlessPressureLevel = 1;
+        }
+        
+        if (newPressureLevel > this.endlessPressureLevel) {
+            this.endlessPressureLevel = newPressureLevel;
+            this.applyPressureLevel(this.endlessPressureLevel);
+            
+            this.showMessage(`PRESSURE LEVEL ${this.endlessPressureLevel}!`, 3000);
+            
+            // Award pressure level bonus
+            const bonus = this.endlessPressureLevel * 50;
+            this.scoringManager.addScore(bonus);
+            this.showFloatingScore(bonus, `LEVEL ${this.endlessPressureLevel} BONUS`);
+        }
+    }
+
+    /**
+     * ENDLESS MODE: Apply pressure level effects
+     */
+    applyPressureLevel(level) {
+        // Level 1-3: Faster shape generation
+        if (level <= 3) {
+            // Reduce shape generation delay slightly
+            this.shapeGenerationDelay = Math.max(500, 1000 - (level * 100));
+        }
+        
+        // Level 4-6: Add shape complexity
+        else if (level <= 6) {
+            this.difficulty = level <= 5 ? DIFFICULTY.MEDIUM : DIFFICULTY.HARD;
+            this.shapeGenerator.setDifficulty(this.difficulty);
+        }
+        
+        // Level 7-9: Grid effects
+        else if (level <= 9) {
+            // Randomly add some "obstacle" blocks
+            if (Math.random() < 0.3) {
+                this.addRandomObstacles(Math.min(3, level - 6));
+            }
+        }
+        
+        // Level 10+: Extreme mode
+        else {
+            // Combination of all effects
+            this.difficulty = DIFFICULTY.HARD;
+            this.shapeGenerator.setDifficulty(this.difficulty);
+            
+            if (Math.random() < 0.5) {
+                this.addRandomObstacles(Math.min(5, Math.floor(level / 2)));
+            }
+        }
+        
+        console.log(`Applied pressure level ${level} effects`);
+    }
+
+    /**
+     * ENDLESS MODE: Add random obstacle blocks for pressure
+     */
+    addRandomObstacles(count) {
+        const grid = this.gameGrid.grid;
+        let added = 0;
+        
+        for (let i = 0; i < count * 10 && added < count; i++) {
+            const row = Math.floor(Math.random() * GRID.ROWS);
+            const col = Math.floor(Math.random() * GRID.COLS);
+            
+            if (grid[row][col] === 0) {
+                grid[row][col] = 7; // Special obstacle color
+                added++;
+            }
+        }
+        
+        if (added > 0) {
+            this.gameGrid.render();
+            this.showMessage(`${added} obstacles added!`, 1500);
+        }
+    }
+
+    /**
+     * ENDLESS MODE: Create visual cleanup effect
+     */
+    createCleanupEffect() {
+        const centerX = this.cameras.main.centerX;
+        const centerY = this.cameras.main.centerY;
+        
+        // Create expanding ring effect
+        const ring = this.add.circle(centerX, centerY, 10, 0x00FF00, 0);
+        ring.setStrokeStyle(3, 0x00FF00, 0.8);
+        ring.setDepth(10);
+        
+        this.tweens.add({
+            targets: ring,
+            radius: 200,
+            alpha: 0,
+            duration: 1000,
+            ease: 'Power2.Out',
+            onComplete: () => ring.destroy()
+        });
+        
+        // Add sparkle effects
+        for (let i = 0; i < 12; i++) {
+            const angle = (i / 12) * Math.PI * 2;
+            const sparkle = this.add.text(
+                centerX + Math.cos(angle) * 50,
+                centerY + Math.sin(angle) * 50,
+                '✨', { fontSize: '16px' }
+            ).setDepth(11);
+            
+            this.tweens.add({
+                targets: sparkle,
+                x: centerX + Math.cos(angle) * 150,
+                y: centerY + Math.sin(angle) * 150,
+                alpha: 0,
+                scale: 0.5,
+                duration: 800,
+                delay: i * 50,
+                ease: 'Power2.Out',
+                onComplete: () => sparkle.destroy()
+            });
+        }
+    }
+
+    /**
+     * ENDLESS MODE: Clear adjacent blocks around position
+     */
+    clearAdjacentBlocks(row, col) {
+        const grid = this.gameGrid.grid;
+        
+        for (let r = Math.max(0, row - 1); r <= Math.min(GRID.ROWS - 1, row + 1); r++) {
+            for (let c = Math.max(0, col - 1); c <= Math.min(GRID.COLS - 1, col + 1); c++) {
+                if (r !== row || c !== col) {
+                    grid[r][c] = 0;
+                }
+            }
+        }
+    }
+
+    /**
+     * ENDLESS MODE: Count clearable adjacent blocks
+     */
+    countAdjacentClearable(row, col) {
+        const grid = this.gameGrid.grid;
+        let count = 0;
+        
+        for (let r = Math.max(0, row - 1); r <= Math.min(GRID.ROWS - 1, row + 1); r++) {
+            for (let c = Math.max(0, col - 1); c <= Math.min(GRID.COLS - 1, col + 1); c++) {
+                if (r !== row || c !== col && grid[r][c] > 0) {
+                    count++;
+                }
+            }
+        }
+        
+        return count;
+    }
+
+    /**
+     * Show floating score with custom text
+     */
+    showFloatingScore(points, text) {
+        const centerX = this.cameras.main.centerX;
+        const centerY = this.cameras.main.centerY - 100;
+        
+        const scoreText = this.add.text(centerX, centerY, `+${points}\n${text}`, {
+            fontSize: '24px',
+            fontFamily: 'Arial Bold',
+            color: '#FFD700',
+            align: 'center',
+            stroke: '#000000',
+            strokeThickness: 3
+        }).setOrigin(0.5).setDepth(15);
+        
+        this.tweens.add({
+            targets: scoreText,
+            y: centerY - 80,
+            alpha: 0,
+            scale: 1.2,
+            duration: 2000,
+            ease: 'Power2.Out',
+            onComplete: () => scoreText.destroy()
+        });
+    }
+
+    /**
+     * DAILY CHALLENGES: Handle shape placement for challenge-specific logic
+     */
+    handleChallengeShapePlacement(shape) {
+        const challengeType = this.dailyChallenge.challengeType;
+        
+        switch (challengeType) {
+            case 'bossBattle':
+                this.handleBossBattleAttack(shape);
+                break;
+            case 'speedRun':
+                this.handleSpeedRunPlacement();
+                break;
+            case 'zenMode':
+                this.handleZenModePlacement();
+                break;
+        }
+        
+        // Update challenge progress
+        this.dailyChallenge.updateChallenge({
+            shapePlaced: shape,
+            gridState: this.gameGrid.grid,
+            linesCleared: this.lastLinesCleared || 0
+        });
+        
+        // Update challenge UI
+        this.updateChallengeUI();
+    }
+
+    /**
+     * BOSS BATTLE: Handle attack when shape is placed
+     */
+    handleBossBattleAttack(shape) {
+        const attackResult = this.dailyChallenge.updateBossBattle(shape);
+        
+        if (attackResult.weaknessHit) {
+            // Critical hit effect
+            this.createBossHitEffect(attackResult.damage, true);
+            this.showMessage(`CRITICAL HIT! ${attackResult.damage} damage!`, 2000);
+            
+            // Boss health updated automatically in dailyChallenge
+        } else {
+            // Regular attack
+            const regularDamage = 10;
+            this.dailyChallenge.bossHealth = Math.max(0, this.dailyChallenge.bossHealth - regularDamage);
+            this.createBossHitEffect(regularDamage, false);
+        }
+        
+        // Check if boss is defeated
+        if (this.dailyChallenge.bossHealth <= 0) {
+            this.handleBossDefeat();
+        }
+    }
+
+    /**
+     * BOSS BATTLE: Create boss hit visual effect
+     */
+    createBossHitEffect(damage, isCritical) {
+        const centerX = this.cameras.main.centerX;
+        const centerY = this.cameras.main.centerY;
+        
+        const hitText = this.add.text(centerX, centerY - 100, `-${damage}`, {
+            fontSize: isCritical ? '32px' : '24px',
+            fontFamily: 'Arial Bold',
+            color: isCritical ? '#FF0000' : '#FF8888',
+            stroke: '#000000',
+            strokeThickness: 3
+        }).setOrigin(0.5).setDepth(200);
+        
+        this.tweens.add({
+            targets: hitText,
+            y: centerY - 150,
+            alpha: 0,
+            scale: isCritical ? 1.5 : 1.2,
+            duration: 1500,
+            ease: 'Power2.Out',
+            onComplete: () => hitText.destroy()
+        });
+        
+        // Screen shake for critical hits
+        if (isCritical) {
+            this.cameras.main.shake(200, 0.02);
+        }
+    }
+
+    /**
+     * BOSS BATTLE: Handle boss defeat
+     */
+    handleBossDefeat() {
+        this.showMessage('🎉 BOSS DEFEATED! 🎉', 4000);
+        
+        // Victory effect
+        this.createVictoryEffect();
+        
+        // Bonus score
+        const victoryBonus = 1000;
+        this.scoringManager.addScore(victoryBonus);
+        this.showFloatingScore(victoryBonus, 'VICTORY BONUS');
+        
+        // Play victory sound
+        audioManager.playClear(); // Use clear sound as victory for now
+    }
+
+    /**
+     * BOSS BATTLE: Create victory visual effect
+     */
+    createVictoryEffect() {
+        const centerX = this.cameras.main.centerX;
+        const centerY = this.cameras.main.centerY;
+        
+        // Fireworks effect
+        for (let i = 0; i < 15; i++) {
+            const angle = (i / 15) * Math.PI * 2;
+            const distance = 50 + Math.random() * 100;
+            
+            const firework = this.add.text(
+                centerX + Math.cos(angle) * distance,
+                centerY + Math.sin(angle) * distance,
+                '🎆', { fontSize: '24px' }
+            ).setDepth(200);
+            
+            this.tweens.add({
+                targets: firework,
+                x: centerX + Math.cos(angle) * (distance + 100),
+                y: centerY + Math.sin(angle) * (distance + 100),
+                alpha: 0,
+                scale: 0.3,
+                duration: 2000,
+                delay: i * 100,
+                ease: 'Power2.Out',
+                onComplete: () => firework.destroy()
+            });
+        }
+    }
+
+    /**
+     * SPEED RUN: Handle fast placement bonuses
+     */
+    handleSpeedRunPlacement() {
+        const now = Date.now();
+        const timeSinceLastPlacement = now - (this.lastPlacementTime || now);
+        
+        if (timeSinceLastPlacement < 2000) { // Fast placement
+            const speedBonus = Math.floor(50 * this.dailyChallenge.speedLevel);
+            this.scoringManager.addScore(speedBonus);
+            this.showFloatingScore(speedBonus, 'SPEED BONUS');
+        }
+        
+        this.lastPlacementTime = now;
+    }
+
+    /**
+     * ZEN MODE: Handle pattern beauty scoring
+     */
+    handleZenModePlacement() {
+        // This is handled automatically in the daily challenge update
+        // Additional visual feedback could be added here
+        const beautyScore = this.dailyChallenge.patternScore;
+        if (beautyScore > 0) {
+            this.showMessage(`Beautiful pattern! +${beautyScore} harmony`, 1500);
+        }
+    }
+
+    /**
+     * Update challenge-specific UI elements
+     */
+    updateChallengeUI() {
+        if (!this.dailyChallenge) return;
+        
+        const challengeType = this.dailyChallenge.challengeType;
+        
+        switch (challengeType) {
+            case 'timeAttack':
+                if (this.ui.timerText) {
+                    const timeLeft = Math.max(0, this.dailyChallenge.timeRemaining);
+                    const minutes = Math.floor(timeLeft / 60000);
+                    const seconds = Math.floor((timeLeft % 60000) / 1000);
+                    this.ui.timerText.setText(`${minutes}:${seconds.toString().padStart(2, '0')}`);
+                    
+                    // Change color as time runs out
+                    if (timeLeft < 30000) {
+                        this.ui.timerText.setColor('#FF0000');
+                    } else if (timeLeft < 60000) {
+                        this.ui.timerText.setColor('#FF8800');
+                    }
+                }
+                break;
+                
+            case 'cascade':
+                if (this.ui.cascadeMultiplier) {
+                    this.ui.cascadeMultiplier.setText(`Cascade: x${this.dailyChallenge.cascadeMultiplier.toFixed(1)}`);
+                }
+                break;
+                
+            case 'speedRun':
+                if (this.ui.speedLevel) {
+                    this.ui.speedLevel.setText(`Speed: Level ${Math.floor(this.dailyChallenge.speedLevel)}`);
+                }
+                break;
+                
+            case 'zenMode':
+                if (this.ui.patternScore) {
+                    this.ui.patternScore.setText(`Harmony: ${this.dailyChallenge.patternScore}`);
+                }
+                break;
+                
+            case 'bossBattle':
+                if (this.ui.bossHealthBar && this.ui.bossHealthText) {
+                    const healthPercent = this.dailyChallenge.bossHealth / this.dailyChallenge.config.bossHealth;
+                    this.ui.bossHealthBar.scaleX = healthPercent;
+                    this.ui.bossHealthText.setText(`Boss: ${this.dailyChallenge.bossHealth}`);
+                    
+                    // Change health bar color as boss gets weaker
+                    if (healthPercent < 0.3) {
+                        this.ui.bossHealthBar.setFillStyle(0xFF8800);
+                    } else if (healthPercent < 0.6) {
+                        this.ui.bossHealthBar.setFillStyle(0xFFFF00);
+                    }
+                }
+                break;
+        }
+    }
+
+    /**
+     * Handle mystery grid reveals for Wednesday challenges
+     */
+    handleMysteryGridReveal(linesCleared) {
+        if (!this.currentMystery || this.mysteryGuessed) return;
+        
+        this.mysteryLinesCleared += linesCleared;
+        
+        // Hide the initial hint after first line clear
+        if (this.ui.mysteryHint) {
+            this.ui.mysteryHint.destroy();
+            this.ui.mysteryHint = null;
+        }
+        
+        // Progressive reveal - only starts revealing after 5 lines
+        if (this.mysteryLinesCleared < 5) {
+            this.updateMysteryProgress();
+            this.showMessage(`Keep clearing lines! (${this.mysteryLinesCleared}/15)`, 1500);
+            return;
+        }
+        
+        // Calculate how many pixels to reveal - ONLY reveal a few pixels per line clear
+        const pixelsPerLineClear = Math.max(1, Math.floor(this.mysteryTotalPixels / 15)); // Spread across 15 lines
+        const pixelsToReveal = pixelsPerLineClear; // Only reveal based on THIS line clear, not total
+        
+        // Add some pixels to existing revealed pixels
+        this.revealMysteryPixels(pixelsToReveal);
+        this.updateMysteryProgress();
+        
+        // Check for milestones
+        this.checkMysteryMilestones();
+        
+        // Show progress feedback
+        if (this.mysteryLinesCleared < 15) {
+            this.showMessage(`Image revealing... (${this.mysteryLinesCleared}/15 lines)`, 1500);
+        }
+    }
+    
+    revealMysteryPixels(count) {
+        const pattern = this.currentMystery.pattern;
+        let revealed = 0;
+        
+        // Build list of all possible pixel positions
+        const allPixels = [];
+        for (let row = 0; row < pattern.length; row++) {
+            for (let col = 0; col < pattern[row].length; col++) {
+                if (pattern[row][col] !== ' ') {
+                    allPixels.push({ row, col });
+                }
+            }
+        }
+        
+        // Reveal random pixels that haven't been revealed yet
+        for (let i = 0; i < count && revealed < count; i++) {
+            const availablePixels = allPixels.filter(pixel => 
+                !this.revealedPixels.some(p => p.row === pixel.row && p.col === pixel.col)
+            );
+            
+            if (availablePixels.length === 0) break;
+            
+            const randomPixel = availablePixels[Math.floor(Math.random() * availablePixels.length)];
+            this.revealedPixels.push(randomPixel);
+            
+            // Create visual pixel
+            this.createMysteryPixelVisual(randomPixel);
+            revealed++;
+        }
+        
+        this.mysteryPixelsRevealed += revealed;
+    }
+    
+    createMysteryPixelVisual(pixel) {
+        const pixelSize = 12;
+        const pixelX = this.mysteryRevealAreaX + (pixel.col * pixelSize);
+        const pixelY = this.mysteryRevealAreaY + (pixel.row * pixelSize);
+        
+        const pixelGraphic = this.add.rectangle(
+            pixelX, pixelY,
+            pixelSize - 1, pixelSize - 1,
+            0xFFD700, 1.0
+        ).setDepth(50);
+        
+        // Add reveal animation
+        pixelGraphic.setScale(0);
+        this.tweens.add({
+            targets: pixelGraphic,
+            scale: 1,
+            duration: 300,
+            ease: 'Back.easeOut'
+        });
+        
+        this.mysteryPixelGroup.add(pixelGraphic);
+    }
+    
+    updateMysteryProgress() {
+        if (this.ui.mysteryProgress) {
+            const percentage = Math.floor((this.mysteryPixelsRevealed / this.mysteryTotalPixels) * 100);
+            this.ui.mysteryProgress.setText(
+                `Lines Cleared: ${this.mysteryLinesCleared}/15\nReveal Progress: ${percentage}%`
+            );
+        }
+    }
+    
+    checkMysteryMilestones() {
+        const percentage = this.mysteryPixelsRevealed / this.mysteryTotalPixels;
+        
+        // Major milestones with rewards based on actual revealed percentage
+        if (percentage >= 0.25 && !this.mysteryMilestone25) {
+            this.mysteryMilestone25 = true;
+            this.showMessage('🔍 25% revealed! Image taking shape!', 2000);
+            this.scoringManager.addScore(200);
+        }
+        
+        if (percentage >= 0.5 && !this.mysteryMilestone50) {
+            this.mysteryMilestone50 = true;
+            this.showMessage('🎯 50% revealed! Can you guess what it is?', 2500);
+            this.scoringManager.addScore(300);
+        }
+        
+        // Full reveal and guessing phase only after 15 lines
+        if (this.mysteryLinesCleared >= 15 && !this.mysteryRevealed) {
+            this.mysteryRevealed = true;
+            this.revealRemainingPixels();
+            this.showMysteryGuessDialog();
+        }
+    }
+    
+    revealRemainingPixels() {
+        // Reveal all remaining pixels with animation
+        const pattern = this.currentMystery.pattern;
+        for (let row = 0; row < pattern.length; row++) {
+            for (let col = 0; col < pattern[row].length; col++) {
+                if (pattern[row][col] !== ' ') {
+                    const isAlreadyRevealed = this.revealedPixels.some(p => p.row === row && p.col === col);
+                    if (!isAlreadyRevealed) {
+                        this.time.delayedCall(Math.random() * 1000, () => {
+                            this.createMysteryPixelVisual({ row, col });
+                        });
+                    }
+                }
+            }
+        }
+        
+        this.mysteryPixelsRevealed = this.mysteryTotalPixels;
+        this.updateMysteryProgress();
+    }
+    
+    showMysteryGuessDialog() {
+        // Show guess prompt
+        this.ui.guessPrompt = this.add.text(this.cameras.main.centerX, 450, 
+            `🎯 MYSTERY REVEALED!\nWhat do you think it is?\n\n🔤 Type your guess or click for hint!`, {
+            fontSize: '14px',
+            fontFamily: 'Arial',
+            color: '#FFD700',
+            backgroundColor: 'rgba(0,0,100,0.9)',
+            padding: { x: 15, y: 10 },
+            align: 'center'
+        }).setOrigin(0.5).setDepth(200);
+        
+        // Add guess input functionality
+        this.setupMysteryGuessInput();
+    }
+    
+    setupMysteryGuessInput() {
+        // Enable keyboard input for guessing
+        if (this.input.keyboard) {
+            this.guessInput = '';
+            this.showGuessInputField();
+        }
+    }
+    
+    showGuessInputField() {
+        // Create input field visual
+        this.ui.inputField = this.add.rectangle(
+            this.cameras.main.centerX, 520,
+            300, 40,
+            0x000080, 0.9
+        ).setDepth(200);
+        
+        this.ui.inputField.setStrokeStyle(2, 0xFFD700);
+        
+        this.ui.inputText = this.add.text(
+            this.cameras.main.centerX, 520,
+            'Type your guess here...',
+            {
+                fontSize: '14px',
+                fontFamily: 'Arial',
+                color: '#FFFFFF'
+            }
+        ).setOrigin(0.5).setDepth(201);
+        
+        // Add hint button
+        this.ui.hintButton = this.add.text(
+            this.cameras.main.centerX - 80, 570,
+            '💡 HINT',
+            {
+                fontSize: '12px',
+                fontFamily: 'Arial',
+                color: '#FFD700',
+                backgroundColor: 'rgba(100,100,0,0.8)',
+                padding: { x: 10, y: 5 }
+            }
+        ).setOrigin(0.5).setDepth(200).setInteractive();
+        
+        this.ui.hintButton.on('pointerdown', () => this.showMysteryHint());
+        
+        // Add submit button
+        this.ui.submitButton = this.add.text(
+            this.cameras.main.centerX + 80, 570,
+            '✅ GUESS',
+            {
+                fontSize: '12px',
+                fontFamily: 'Arial',
+                color: '#FFFFFF',
+                backgroundColor: 'rgba(0,100,0,0.8)',
+                padding: { x: 10, y: 5 }
+            }
+        ).setOrigin(0.5).setDepth(200).setInteractive();
+        
+        this.ui.submitButton.on('pointerdown', () => this.submitMysteryGuess());
+        
+        // Handle keyboard input
+        this.input.keyboard.on('keydown', (event) => {
+            if (this.mysteryGuessed) return;
+            
+            if (event.key === 'Enter') {
+                this.submitMysteryGuess();
+            } else if (event.key === 'Backspace') {
+                this.guessInput = this.guessInput.slice(0, -1);
+                this.updateGuessDisplay();
+            } else if (event.key.length === 1 && this.guessInput.length < 20) {
+                this.guessInput += event.key;
+                this.updateGuessDisplay();
+            }
+        });
+    }
+    
+    updateGuessDisplay() {
+        if (this.ui.inputText) {
+            this.ui.inputText.setText(this.guessInput || 'Type your guess here...');
+        }
+    }
+    
+    showMysteryHint() {
+        if (this.currentHintIndex >= this.currentMystery.hints.length) {
+            this.showMessage('No more hints available!', 2000);
+            return;
+        }
+        
+        const hint = this.currentMystery.hints[this.currentHintIndex];
+        this.currentHintIndex++;
+        
+        this.showMessage(`💡 Hint: ${hint}`, 4000);
+        this.scoringManager.addScore(-50); // Small penalty for using hints
+    }
+    
+    submitMysteryGuess() {
+        if (!this.guessInput || this.guessInput.trim() === '') {
+            this.showMessage('Please enter a guess first!', 2000);
+            return;
+        }
+        
+        const guess = this.guessInput.toLowerCase().trim();
+        const correctAnswers = this.currentMystery.answers;
+        
+        const isCorrect = correctAnswers.some(answer => 
+            answer.toLowerCase() === guess || guess.includes(answer.toLowerCase())
+        );
+        
+        if (isCorrect) {
+            this.mysteryGuessed = true;
+            this.showMessage(`🎉 CORRECT! It's a ${this.currentMystery.name}!\n+1000 BONUS POINTS!`, 4000);
+            this.scoringManager.addScore(1000);
+            this.cleanupMysteryGuessUI();
+        } else {
+            this.showMessage(`❌ Not quite right. Try again!`, 2000);
+            this.guessInput = '';
+            this.updateGuessDisplay();
+        }
+    }
+    
+    cleanupMysteryGuessUI() {
+        // Clean up guess interface
+        if (this.ui.guessPrompt) this.ui.guessPrompt.destroy();
+        if (this.ui.inputField) this.ui.inputField.destroy();
+        if (this.ui.inputText) this.ui.inputText.destroy();
+        if (this.ui.hintButton) this.ui.hintButton.destroy();
+        if (this.ui.submitButton) this.ui.submitButton.destroy();
+        
+        // Remove keyboard listener
+        if (this.input.keyboard) {
+            this.input.keyboard.removeAllListeners('keydown');
+        }
+    }
+
+    /**
+     * MYSTERY GRID: Reveal a random pixel from the mystery image
+     * @returns {boolean} True if a pixel was actually revealed
+     */
+
+
+    /**
      * Show game over screen with enhanced animations and design
      */
-    showGameOverScreen(isNewHighScore) {
+    showGameOverScreen(isNewHighScore, achievementUnlocks = []) {
         const centerX = this.cameras.main.centerX;
         const centerY = this.cameras.main.centerY;
         const theme = themeManager.getCurrentTheme();
@@ -1201,6 +2522,10 @@ export class GameScene extends Phaser.Scene {
             // Track mode-specific stats for daily challenge completion
             const gameStats = this.getGameStatistics();
             storage.updateModeStats(this.gameMode, gameStats);
+            
+            // Update achievements for daily challenge completion
+            console.log('📅 DAILY CHALLENGE - Calling achievementSystem.updateRecords with:', this.gameMode, gameStats);
+            achievementSystem.updateRecords(this.gameMode, gameStats);
 
             if (rewards) {
                 dailyChallengeOffset = 60;
@@ -1262,8 +2587,14 @@ export class GameScene extends Phaser.Scene {
             }
         }
 
+        // Show achievement unlock notifications
+        let achievementOffset = 0;
+        if (achievementUnlocks.length > 0) {
+            achievementOffset = this.showAchievementUnlocks(centerX, centerY + 120 + dailyChallengeOffset, achievementUnlocks);
+        }
+
         // Enhanced play again button with better positioning and animation
-        const buttonY = centerY + 180 + dailyChallengeOffset;
+        const buttonY = centerY + 180 + dailyChallengeOffset + achievementOffset;
         
         const playAgainButton = this.createButton(centerX, buttonY, 160, 40, '🎮 PLAY AGAIN', () => {
             this.scene.restart();
@@ -1309,13 +2640,17 @@ export class GameScene extends Phaser.Scene {
         const playTime = Date.now() - this.gameStartTime;
         const coinsEarned = storage.getCoins() - this.initialCoins;
 
-        return {
+        const gameStats = {
+            score: this.scoringManager.getScore() || 0,
             linesCleared: this.scoringManager.totalLinesCleared || 0,
             maxCombo: this.scoringManager.maxCombo || 0,
             shapesPlaced: this.shapesPlacedCount || 0,
             playTime: playTime,
             coinsEarned: Math.max(0, coinsEarned)
         };
+        
+        console.log('📊 Game statistics generated:', gameStats);
+        return gameStats;
     }
 
     /**
@@ -2256,5 +3591,115 @@ export class GameScene extends Phaser.Scene {
         const g = Math.floor(((color >> 8) & 0xFF) * (1 - factor));
         const b = Math.floor((color & 0xFF) * (1 - factor));
         return (r << 16) | (g << 8) | b;
+    }
+
+    /**
+     * Show achievement unlock notifications
+     */
+    showAchievementUnlocks(centerX, startY, unlocks) {
+        if (!unlocks || unlocks.length === 0) return 0;
+
+        let totalHeight = 0;
+        let delay = 4000; // Start after other animations
+
+        unlocks.forEach((unlock, index) => {
+            const y = startY + (index * 60);
+            totalHeight += 60;
+
+            // Achievement unlock container
+            const container = this.add.container(centerX, y);
+
+            // Background with tier color
+            const tierColors = {
+                bronze: 0xCD7F32,
+                silver: 0xC0C0C0,
+                gold: 0xFFD700,
+                diamond: 0xB9F2FF
+            };
+
+            const bg = this.add.rectangle(0, 0, 350, 50, 0x000000, 0.9);
+            bg.setStrokeStyle(3, tierColors[unlock.tier.level] || 0xFFD700);
+
+            // Achievement icon
+            const icon = this.add.text(-150, 0, unlock.tier.icon, {
+                fontSize: '24px'
+            }).setOrigin(0.5);
+
+            // Achievement text
+            const titleText = this.add.text(-120, -8, `🎉 ACHIEVEMENT UNLOCKED!`, {
+                fontSize: '12px',
+                fontFamily: 'Arial',
+                color: '#FFD700',
+                fontStyle: 'bold'
+            });
+
+            const nameText = this.add.text(-120, 8, unlock.tier.name, {
+                fontSize: '14px',
+                fontFamily: 'Arial',
+                color: tierColors[unlock.tier.level] ? `#${tierColors[unlock.tier.level].toString(16).padStart(6, '0')}` : '#FFD700',
+                fontStyle: 'bold'
+            });
+
+            // Coin reward
+            const coinText = this.add.text(140, 0, `+${unlock.coins} 💰`, {
+                fontSize: '16px',
+                fontFamily: 'Arial',
+                color: '#FFD700',
+                fontStyle: 'bold'
+            }).setOrigin(0.5);
+
+            container.add([bg, icon, titleText, nameText, coinText]);
+
+            // Animation
+            container.setAlpha(0);
+            container.setScale(0.8);
+
+            this.tweens.add({
+                targets: container,
+                alpha: 1,
+                scaleX: 1,
+                scaleY: 1,
+                duration: 800,
+                delay: delay + (index * 500),
+                ease: 'Back.Out'
+            });
+
+            // Sparkle effect
+            this.time.delayedCall(delay + (index * 500) + 400, () => {
+                this.createSparkleEffect(centerX, y, tierColors[unlock.tier.level] || 0xFFD700);
+            });
+
+            // Award coins
+            storage.addCoins(unlock.coins);
+        });
+
+        return totalHeight + 20; // Extra spacing
+    }
+
+    /**
+     * Create sparkle effect for achievement unlocks
+     */
+    createSparkleEffect(x, y, color) {
+        for (let i = 0; i < 8; i++) {
+            const angle = (i / 8) * Math.PI * 2;
+            const distance = 60;
+            const sparkleX = x + Math.cos(angle) * distance;
+            const sparkleY = y + Math.sin(angle) * distance;
+
+            const sparkle = this.add.text(sparkleX, sparkleY, '✨', {
+                fontSize: '16px'
+            }).setOrigin(0.5);
+
+            this.tweens.add({
+                targets: sparkle,
+                alpha: 0,
+                scale: 1.5,
+                x: sparkleX + Math.cos(angle) * 20,
+                y: sparkleY + Math.sin(angle) * 20,
+                duration: 1000,
+                ease: 'Power2.Out',
+                onComplete: () => sparkle.destroy()
+            });
+        }
     }
 }

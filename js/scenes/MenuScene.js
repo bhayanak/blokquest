@@ -614,6 +614,7 @@ export class MenuScene extends Phaser.Scene {
         // Initially hidden
         this.menuElements.settingsPanel = this.add.container(0, 0);
         this.menuElements.settingsPanel.setVisible(false);
+        this.menuElements.settingsPanel.setDepth(1000); // High depth to appear above menu buttons
 
         const centerX = this.cameras.main.centerX;
         const centerY = this.cameras.main.centerY;
@@ -1062,6 +1063,7 @@ export class MenuScene extends Phaser.Scene {
         // Initially hidden
         this.menuElements.shopPanel = this.add.container(0, 0);
         this.menuElements.shopPanel.setVisible(false);
+        this.menuElements.shopPanel.setDepth(1000); // High depth to appear above menu buttons
 
         const centerX = this.cameras.main.centerX;
         const centerY = this.cameras.main.centerY;
@@ -1097,14 +1099,15 @@ export class MenuScene extends Phaser.Scene {
         title.setOrigin(0.5);
         this.menuElements.shopPanel.add(title);
 
-        // Coins display with enhanced styling - positioned properly within panel
+        // Coins display positioned above back button, below power-ups
         const coins = storage.getCoins();
-        const coinsY = centerY - panelHeight / 2 + 80; // Position below title but inside panel
-        this.menuElements.coinsBg = this.add.rectangle(centerX, coinsY, 200, 40, parseInt(themeManager.getCurrentTheme().ui.buttonBackground.replace('#', ''), 16));
+        const coinsY = centerY + panelHeight / 2 - 90; // Position above back button
+        this.menuElements.coinsBg = this.add.rectangle(centerX, coinsY, 250, 45, parseInt(themeManager.getCurrentTheme().ui.buttonBackground.replace('#', ''), 16), 0.9);
+        this.menuElements.coinsBg.setStrokeStyle(2, parseInt(themeManager.getCurrentTheme().accent.replace('#', ''), 16));
         this.menuElements.shopPanel.add(this.menuElements.coinsBg);
 
-        this.menuElements.coinsDisplay = this.add.text(centerX, coinsY, `💰 ${coins} coins`, {
-            fontSize: '18px',
+        this.menuElements.coinsDisplay = this.add.text(centerX, coinsY, `💰 ${coins.toLocaleString()} coins`, {
+            fontSize: '20px',
             fontFamily: 'Arial, sans-serif',
             color: themeManager.getCurrentTheme().accent,
             fontStyle: 'bold'
@@ -1302,7 +1305,9 @@ export class MenuScene extends Phaser.Scene {
             });
         });
 
-        return this.add.container(0, 0, [graphics, button, buttonText]);
+        const container = this.add.container(0, 0, [graphics, button, buttonText]);
+        container.setDepth(10); // Menu buttons should be above background but below popups
+        return container;
     }
 
     /**
@@ -1387,7 +1392,9 @@ export class MenuScene extends Phaser.Scene {
             }
         });
 
-        return this.add.container(0, 0, [graphics, button, buttonText]);
+        const container = this.add.container(0, 0, [graphics, button, buttonText]);
+        container.setDepth(10); // Menu buttons should be above background but below popups
+        return container;
     }
 
     /**
@@ -1493,6 +1500,9 @@ export class MenuScene extends Phaser.Scene {
         this.selectedTheme = nextTheme;
         themeManager.setTheme(nextTheme);
         storage.setTheme(nextTheme);
+
+        // Update all UI elements with new theme
+        this.updateTheme();
 
         // Update theme button
         const themeName = themeManager.getTheme(nextTheme).name;
@@ -1605,9 +1615,8 @@ export class MenuScene extends Phaser.Scene {
     }
 
     showStatistics() {
-        this.hideAllPanels();
-        this.updateStatisticsContent();
-        this.menuElements.statsPanel.setVisible(true);
+        // Launch the new comprehensive Statistics Scene
+        this.scene.start('StatsScene');
     }
 
     hideStatistics() {
@@ -1651,6 +1660,10 @@ export class MenuScene extends Phaser.Scene {
      */
     selectTheme(themeName) {
         themeManager.setTheme(themeName);
+        
+        // Update all UI elements with new theme
+        this.updateTheme();
+        
         // Refresh the settings panel to show updated selection
         this.refreshSettingsPanel();
     }
@@ -2349,7 +2362,7 @@ export class MenuScene extends Phaser.Scene {
         // Update coins display
         if (this.menuElements.coinsDisplay) {
             const coins = storage.getCoins();
-            this.menuElements.coinsDisplay.setText(`💰 ${coins} coins`);
+            this.menuElements.coinsDisplay.setText(`💰 ${coins.toLocaleString()} coins`);
         }
 
         const centerX = this.cameras.main.centerX;
@@ -2566,11 +2579,154 @@ export class MenuScene extends Phaser.Scene {
         this.cameras.main.setBackgroundColor(colors.background);
 
         // Update all UI elements with new theme colors
-        // This is a simplified version - full implementation would update all elements
-        // Note: Rainbow title doesn't need color update as it uses fixed rainbow colors
         if (this.menuElements.subtitle) {
             this.menuElements.subtitle.setColor(themeManager.getCurrentTheme().textSecondary);
         }
+
+        // Recreate all theme-dependent buttons
+        this.recreateThemeButtons();
+    }
+
+    /**
+     * Recreate all buttons that use theme colors
+     */
+    recreateThemeButtons() {
+        // Store current button states and positions before destroying
+        const buttonStates = this.storeButtonStates();
+
+        // Destroy existing themed buttons
+        this.destroyThemedButtons();
+
+        // Recreate buttons with new theme colors
+        this.recreateMainButtons(buttonStates);
+        this.recreateUtilityButtons(buttonStates);
+    }
+
+    /**
+     * Store current button states and positions
+     */
+    storeButtonStates() {
+        const states = {};
+        
+        // Store main mode buttons info
+        if (this.menuElements.modeButtons) {
+            states.modeButtons = this.menuElements.modeButtons.map((buttonData, index) => ({
+                index,
+                x: buttonData.button ? buttonData.button.x : 0,
+                y: buttonData.button ? buttonData.button.y : 0
+            }));
+        }
+
+        // Store utility buttons positions
+        if (this.menuElements.settingsButton) {
+            states.settingsButton = { x: this.menuElements.settingsButton.x, y: this.menuElements.settingsButton.y };
+        }
+        if (this.menuElements.statsButton) {
+            states.statsButton = { x: this.menuElements.statsButton.x, y: this.menuElements.statsButton.y };
+        }
+
+        return states;
+    }
+
+    /**
+     * Destroy all themed buttons
+     */
+    destroyThemedButtons() {
+        // Destroy main mode buttons
+        if (this.menuElements.modeButtons) {
+            this.menuElements.modeButtons.forEach(buttonData => {
+                if (buttonData.button) {
+                    buttonData.button.destroy();
+                }
+            });
+            this.menuElements.modeButtons = [];
+        }
+
+        // Destroy utility buttons
+        if (this.menuElements.settingsButton) {
+            this.menuElements.settingsButton.destroy();
+            this.menuElements.settingsButton = null;
+        }
+        if (this.menuElements.statsButton) {
+            this.menuElements.statsButton.destroy();
+            this.menuElements.statsButton = null;
+        }
+    }
+
+    /**
+     * Recreate main game mode buttons with current theme
+     */
+    recreateMainButtons(buttonStates) {
+        const centerX = this.cameras.main.centerX;
+        const startY = this.cameras.main.centerY - 20;
+        const buttonHeight = 50;
+        const buttonSpacing = 15;
+        const modes = this.getActiveModes();
+
+        // Recreate mode buttons
+        modes.forEach((mode, index) => {
+            const row = Math.floor(index / 2);
+            const col = index % 2;
+            const x = centerX + (col === 0 ? -100 : 100);
+            const y = startY + row * (buttonHeight + buttonSpacing);
+
+            let buttonLabel = mode.label;
+            let button;
+
+            // Special handling for daily challenge
+            if (mode.key === GAME_MODES.DAILY) {
+                const isCompleted = isDailyCompleted();
+                if (isCompleted) {
+                    buttonLabel = '📅 DAILY ✅';
+                }
+            }
+
+            // Special handling for puzzle mode - create disabled button
+            if (mode.key === GAME_MODES.PUZZLE) {
+                button = this.createDisabledMenuButton(x, y, 190, buttonHeight, buttonLabel, 'Coming Soon');
+            } else {
+                button = this.createMenuButton(x, y, 190, buttonHeight, buttonLabel, () => {
+                    this.selectGameMode(mode.key);
+                });
+            }
+
+            this.menuElements.modeButtons.push({ button });
+        });
+    }
+
+    /**
+     * Recreate utility buttons with current theme
+     */
+    recreateUtilityButtons(buttonStates) {
+        const centerX = this.cameras.main.centerX;
+        const startY = this.cameras.main.centerY - 20;
+        const buttonHeight = 50;
+        const buttonSpacing = 15;
+        const modes = this.getActiveModes();
+        const bottomY = startY + Math.ceil(modes.length / 2) * (buttonHeight + buttonSpacing) + 30;
+
+        // Recreate settings and stats buttons
+        this.menuElements.settingsButton = this.createMenuButton(
+            centerX - 70, bottomY, 120, 40, '⚙️ SETTINGS', () => this.showSettings()
+        );
+
+        this.menuElements.statsButton = this.createMenuButton(
+            centerX + 70, bottomY, 120, 40, '📊 STATS', () => this.showStatistics()
+        );
+    }
+
+    /**
+     * Get active game modes for menu display
+     */
+    getActiveModes() {
+        return [
+            { key: GAME_MODES.NORMAL, label: '🎮 CLASSIC', color: '#4CAF50' },
+            { key: GAME_MODES.DAILY, label: '🗓️ DAILY', color: '#FF9800' },
+            { key: GAME_MODES.ENDLESS, label: '♾️ ENDLESS', color: '#2196F3' },
+            { key: GAME_MODES.ADVENTURE, label: '🗺️ ADVENTURE', color: '#9C27B0' },
+            { key: GAME_MODES.PUZZLE, label: '🧩 PUZZLE', color: '#F44336' },
+            { key: 'shop', label: '🛒 SHOP', color: '#FFD700' }
+        ];
     }
 
     /**

@@ -8,6 +8,7 @@ import { MenuScene } from './scenes/MenuScene.js';
 import { GameScene } from './scenes/GameScene.js';
 import { PuzzleScene } from './scenes/PuzzleScene.js';
 import { AdventureScene } from './scenes/AdventureScene.js';
+import StatsScene from './scenes/StatsScene.js';
 import { performanceManager } from './core/performance.js';
 import { analyticsManager } from './core/analytics.js';
 
@@ -36,7 +37,8 @@ class BlockQuestGame {
                 MenuScene,
                 GameScene,
                 PuzzleScene,
-                AdventureScene
+                AdventureScene,
+                StatsScene
             ],
             callbacks: {
                 postBoot: () => {
