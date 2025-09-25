@@ -74,6 +74,9 @@ export class GameScene extends Phaser.Scene {
         // Create game grid
         this.gameGrid = new GameGrid(this);
 
+        // Reset drag state to ensure clean start
+        this.resetDragState();
+
         // Generate initial shapes
         this.generateTrayShapes();
 
@@ -701,9 +704,14 @@ export class GameScene extends Phaser.Scene {
      * Render shapes in the tray with smaller preview size
      */
     renderTrayShapes() {
-        // Clear existing tray graphics
+        // Clear existing tray graphics and their event listeners
         if (this.ui.trayGraphics) {
-            this.ui.trayGraphics.forEach(graphic => graphic.destroy());
+            this.ui.trayGraphics.forEach(graphic => {
+                if (graphic && !graphic.destroyed) {
+                    graphic.removeAllListeners(); // Clean up event listeners
+                    graphic.destroy();
+                }
+            });
         }
 
         this.ui.trayGraphics = [];
@@ -740,19 +748,13 @@ export class GameScene extends Phaser.Scene {
                 }
             }
 
-            // Make interactive with correct bounds for smaller preview
-            const bounds = new Phaser.Geom.Rectangle(
-                0, 0,
-                shape.width * previewSpacing,
-                shape.height * previewSpacing
-            );
-
-            shapeGraphic.setInteractive(bounds, Phaser.Geom.Rectangle.Contains);
+            // Store shape properties before setting up interactions
             shapeGraphic.shapeIndex = index;
             shapeGraphic.shape = shape;
             shapeGraphic.originalScale = { width: previewSize, spacing: previewSpacing }; // Store original size
 
-            this.setupShapeDragAndDrop(shapeGraphic);
+            // Set up interactive area and dragging (both done in setupShapeDragAndDrop)
+            this.setupShapeDragAndDrop(shapeGraphic, shape.width * previewSpacing, shape.height * previewSpacing);
 
             this.ui.trayGraphics.push(shapeGraphic);
         });
@@ -761,60 +763,72 @@ export class GameScene extends Phaser.Scene {
     /**
      * Set up drag and drop for shapes - Mobile optimized
      */
-    setupShapeDragAndDrop(shapeGraphic) {
-        let isDragging = false;
-        let dragPointerId = null;
+    setupShapeDragAndDrop(shapeGraphic, hitAreaWidth, hitAreaHeight) {
+        // Set up interactive area with proper bounds
+        const bounds = new Phaser.Geom.Rectangle(0, 0, hitAreaWidth || 50, hitAreaHeight || 50);
+        shapeGraphic.setInteractive(bounds, Phaser.Geom.Rectangle.Contains);
+        
+        // Make shapes draggable using Phaser's built-in drag system
+        this.input.setDraggable(shapeGraphic);
 
-        shapeGraphic.on('pointerdown', (pointer, localX, localY, event) => {
-            if (this.gameState !== 'playing' || this.draggedShape) return;
+        // Store reference to prevent multiple drags
+        shapeGraphic.on('dragstart', (pointer, dragX, dragY) => {
+            if (this.gameState !== 'playing') {
+                return;
+            }
 
-            // Prevent multiple drags and store pointer ID for mobile
-            isDragging = true;
-            dragPointerId = pointer.id;
+            // Force clean up any existing drag state first
+            if (this.draggedShape && this.draggedShape !== shapeGraphic) {
+                console.log('🎯 Cleaning up previous drag before starting new one');
+                this.cancelDrag();
+            }
+
+            // Set this shape as the currently dragged shape
             this.draggedShape = shapeGraphic;
             shapeGraphic.setDepth(100);
 
-            // Store touch offset for better mobile experience
+            console.log('🎯 Drag started for shape:', shapeGraphic.shape.type, 'index:', shapeGraphic.shapeIndex);
+
+            // Store drag offset for accurate placement
             this.dragOffset = {
-                x: localX,
-                y: localY
+                x: pointer.x - shapeGraphic.x,
+                y: pointer.y - shapeGraphic.y
             };
 
-            // Create drag preview with mobile optimization
+            // Create drag preview
             this.startDragPreview(shapeGraphic, pointer);
+        });
+
+        shapeGraphic.on('drag', (pointer, dragX, dragY) => {
+            if (this.draggedShape !== shapeGraphic || this.gameState !== 'playing') return;
+
+            // Update drag preview
+            this.updateDragPreview(pointer);
             
-            // Stop event propagation to prevent conflicts
-            event.stopPropagation();
-        });
-
-        // Use specific pointer move/up handlers for better mobile support
-        this.input.on('pointermove', (pointer) => {
-            if (isDragging && pointer.id === dragPointerId && this.draggedShape === shapeGraphic && this.gameState === 'playing') {
-                this.updateDragPreview(pointer);
-                
-                // Haptic feedback for mobile devices
-                if ('vibrate' in navigator && pointer.isDown) {
-                    navigator.vibrate(5);
-                }
+            // Haptic feedback for mobile devices
+            if ('vibrate' in navigator) {
+                navigator.vibrate(5);
             }
         });
 
-        this.input.on('pointerup', (pointer) => {
-            if (isDragging && pointer.id === dragPointerId && this.draggedShape === shapeGraphic) {
-                this.endDragPreview(pointer);
-                
-                // Clean up drag state
-                isDragging = false;
-                dragPointerId = null;
-            }
+        shapeGraphic.on('dragend', (pointer) => {
+            if (this.draggedShape !== shapeGraphic) return;
+            
+            console.log('🎯 Drag ended for shape:', shapeGraphic.shape.type);
+            
+            // Complete the drag operation
+            this.endDragPreview(pointer);
+            
+            // Clean up drag state completely
+            this.draggedShape = null;
+            this.dragOffset = null;
         });
 
-        // Additional cleanup for mobile - handle pointer cancel events
-        this.input.on('pointercancel', (pointer) => {
-            if (isDragging && pointer.id === dragPointerId && this.draggedShape === shapeGraphic) {
+        // Handle edge case where drag gets interrupted
+        shapeGraphic.on('pointerout', () => {
+            if (this.draggedShape === shapeGraphic) {
+                console.log('🎯 Drag interrupted - cleaning up');
                 this.cancelDrag();
-                isDragging = false;
-                dragPointerId = null;
             }
         });
     }
@@ -920,10 +934,19 @@ export class GameScene extends Phaser.Scene {
             // Create visual effect for shape placement
             this.createShapePlaceEffect(shape, gridPos.col, gridPos.row);
 
-            // Remove from tray
+            // Remove from tray and clean up immediately
             console.log('📦 Removing shape from tray slot:', shapeIndex);
             this.trayShapes[shapeIndex] = null;
-            this.draggedShape.destroy();
+            
+            // Clean up drag state BEFORE destroying shape
+            this.gameGrid.hidePlacementPreview();
+            const shapeToDestroy = this.draggedShape;
+            this.draggedShape = null;
+            this.dragOffset = null;
+            this.lastDragPosition = null;
+            
+            // Now safely destroy the shape
+            shapeToDestroy.destroy();
             
             // Update Future Sight display if active (shapes consumed, predictions changed)
             if (this.futureSightActive) {
@@ -987,14 +1010,14 @@ export class GameScene extends Phaser.Scene {
             }
         }
 
-        // Clean up drag state completely
-        this.gameGrid.hidePlacementPreview();
+        // Clean up drag state completely only if shape wasn't placed successfully
         if (this.draggedShape) {
+            this.gameGrid.hidePlacementPreview();
             this.draggedShape.setDepth(1);
+            this.draggedShape = null;
+            this.dragOffset = null;
+            this.lastDragPosition = null;
         }
-        this.draggedShape = null;
-        this.dragOffset = null;
-        this.lastDragPosition = null;
     }
 
     /**
@@ -1002,6 +1025,8 @@ export class GameScene extends Phaser.Scene {
      */
     cancelDrag() {
         if (!this.draggedShape) return;
+
+        console.log('🎯 Canceling drag for shape:', this.draggedShape.shape?.type);
 
         // Scale shape back to preview size
         const colors = themeManager.getPhaserColors();
@@ -1030,6 +1055,17 @@ export class GameScene extends Phaser.Scene {
         this.draggedShape = null;
         this.dragOffset = null;
         this.lastDragPosition = null;
+    }
+
+    /**
+     * Reset all drag state - called when needed to prevent conflicts
+     */
+    resetDragState() {
+        console.log('🔄 Resetting all drag state');
+        this.draggedShape = null;
+        this.dragOffset = null;
+        this.lastDragPosition = null;
+        this.gameGrid.hidePlacementPreview();
     }
 
     /**
